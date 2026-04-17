@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>PPEP TEC — Off-Contract Hours Submission</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a2744'/><text x='5' y='23' font-size='18' fill='%23c9a84c'>PT</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: #eef2f7; font-family: 'DM Sans', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  input:focus, select:focus, textarea:focus { border-color: #2d5ca6 !important; box-shadow: 0 0 0 3px rgba(45,92,166,0.1) !important; outline: none; }
+  button:active { transform: scale(0.98); }
+  button { -webkit-tap-highlight-color: transparent; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: #c5ced8; border-radius: 3px; }
+  @media (max-width: 480px) {
+    .campus-grid { grid-template-columns: 1fr !important; }
+    .two-col-row { flex-direction: column !important; }
+    .stats-row { flex-wrap: wrap; }
+    .teacher-grid { grid-template-columns: 1fr !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const CAMPUSES = [
+  { code: "APLC", name: "Alice Paul Learning Center" },
+  { code: "CCLC", name: "Cesar Chavez Learning Center" },
+  { code: "CFLC", name: "Celestino Fernandez Learning Center" },
+  { code: "CPLC", name: "Colin Powell Learning Center" },
+  { code: "JYLC", name: "Jose Yepez Learning Center" },
+  { code: "RCLC", name: "Raul Castro Learning Center" },
+];
+
+const HOURS_OPTIONS = [
+  { value: 0.5, label: "0.5 hr (30 min)" },
+  { value: 1.0, label: "1.0 hr" },
+  { value: 1.5, label: "1.5 hrs" },
+  { value: 2.0, label: "2.0 hrs (weekly max)" },
+];
+
+const TASKS = [
+  { id: "data", label: "Analyzed weekly class data (grades, attendance, assessments)" },
+  { id: "strategy", label: "Reviewed effectiveness of instructional strategies" },
+  { id: "reflection", label: "Completed lesson reflection & planning adjustments" },
+  { id: "student", label: "Reviewed individual student progress / intervention tracking" },
+  { id: "other", label: "Other (describe in summary)" },
+];
+
+const ADMIN_PIN = "2026";
+const NOTIFY_EMAIL = "mberumen@ppep.org";
+const STORAGE_KEY = "ppep-hours-submissions";
+
+const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const fmt = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const getToday = () => new Date().toISOString().split("T")[0];
+const monthKey = (d) => d.slice(0, 7);
+
+function loadSubmissions() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+function saveSubmissions(subs) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(subs)); } catch(e) { console.error(e); }
+}
+
+/* ─── Icons ─── */
+const CheckIcon = () => <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>;
+const ClockIcon = () => <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" d="M12 6v6l4 2"/></svg>;
+const SendIcon = () => <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>;
+const ShieldIcon = () => <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
+const BackIcon = () => <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5m7-7l-7 7 7 7"/></svg>;
+const TrashIcon = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>;
+
+/* ─── Main App ─── */
+function App() {
+  const [view, setView] = useState("form");
+  const [submissions, setSubmissions] = useState(() => loadSubmissions());
+  const [lastEntry, setLastEntry] = useState(null);
+
+  const addSubmission = useCallback((entry) => {
+    const updated = [entry, ...submissions];
+    setSubmissions(updated);
+    saveSubmissions(updated);
+  }, [submissions]);
+
+  const deleteSubmission = useCallback((id) => {
+    const updated = submissions.filter(s => s.id !== id);
+    setSubmissions(updated);
+    saveSubmissions(updated);
+  }, [submissions]);
+
+  return (
+    <div style={S.shell}>
+      {view === "form" && (
+        <SubmissionForm
+          submissions={submissions}
+          onSubmit={(entry) => { addSubmission(entry); setLastEntry(entry); setView("send-options"); }}
+          onAdmin={() => setView("admin-login")}
+        />
+      )}
+      {view === "send-options" && <SendOptionsScreen entry={lastEntry} onDone={() => setView("success")} />}
+      {view === "success" && <SuccessScreen onDone={() => setView("form")} />}
+      {view === "admin-login" && <AdminLogin onBack={() => setView("form")} onSuccess={() => setView("admin")} />}
+      {view === "admin" && <AdminDashboard submissions={submissions} onDelete={deleteSubmission} onBack={() => setView("form")} />}
+    </div>
+  );
+}
+
+/* ─── Submission Form ─── */
+function SubmissionForm({ submissions, onSubmit, onAdmin }) {
+  const [name, setName] = useState("");
+  const [campus, setCampus] = useState("");
+  const [workDate, setWorkDate] = useState(getToday());
+  const [hours, setHours] = useState("");
+  const [tasks, setTasks] = useState([]);
+  const [summary, setSummary] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [errors, setErrors] = useState({});
+
+  const currentMonth = monthKey(workDate || getToday());
+  const monthlyHours = submissions
+    .filter(s => s.name.toLowerCase() === name.trim().toLowerCase() && monthKey(s.workDate) === currentMonth)
+    .reduce((sum, s) => sum + s.hours, 0);
+
+  const toggleTask = (id) => setTasks(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+
+  const validate = () => {
+    const e = {};
+    if (!name.trim()) e.name = true;
+    if (!campus) e.campus = true;
+    if (!workDate) e.workDate = true;
+    if (!hours) e.hours = true;
+    if (tasks.length === 0) e.tasks = true;
+    if (!summary.trim()) e.summary = true;
+    setErrors(e);
+    if (Object.keys(e).length > 0) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    return Object.keys(e).length === 0;
+  };
+
+  const handleSubmit = () => {
+    if (!validate()) return;
+    const entry = {
+      id: genId(),
+      name: name.trim(),
+      campus,
+      workDate,
+      hours: parseFloat(hours),
+      tasks,
+      summary: summary.trim(),
+      feedback: feedback.trim(),
+      submittedAt: new Date().toISOString(),
+    };
+    onSubmit(entry);
+  };
+
+  const pay = hours ? (parseFloat(hours) * 40).toFixed(2) : null;
+  const wouldExceed = hours && (monthlyHours + parseFloat(hours)) > 8;
+
+  return (
+    <div style={S.container}>
+      <header style={S.header}>
+        <div style={S.headerInner}>
+          <div style={S.headerBadge}>PPEP TEC</div>
+          <h1 style={S.headerTitle}>Off-Contract Hours</h1>
+          <p style={S.headerSub}>Data Analysis Time Tracking</p>
+        </div>
+        <div style={S.goldStripe} />
+      </header>
+
+      <div style={S.infoBar}>
+        <ClockIcon />
+        <span><strong>$40/hr</strong> &middot; Max 2 hrs/week &middot; 8 hrs/month</span>
+      </div>
+
+      <div style={S.formBody}>
+        {/* Name */}
+        <div style={S.field}>
+          <label style={S.label}>Full Name <span style={S.req}>*</span></label>
+          <input
+            style={{...S.input, ...(errors.name ? S.inputError : {})}}
+            placeholder="First and Last Name"
+            value={name}
+            onChange={e => { setName(e.target.value); setErrors(p => ({...p, name:false})); }}
+          />
+        </div>
+
+        {/* Campus */}
+        <div style={S.field}>
+          <label style={S.label}>Campus / Site <span style={S.req}>*</span></label>
+          <div className="campus-grid" style={S.campusGrid}>
+            {CAMPUSES.map(c => (
+              <button key={c.code}
+                onClick={() => { setCampus(c.code); setErrors(p => ({...p, campus:false})); }}
+                style={{...S.campusBtn, ...(campus===c.code?S.campusBtnActive:{}), ...(errors.campus?{borderColor:"#e74c3c"}:{})}}
+              >
+                <span style={S.campusCode}>{c.code}</span>
+                <span style={S.campusName}>{c.name.replace(" Learning Center","")}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Date + Hours */}
+        <div className="two-col-row" style={S.row}>
+          <div style={{...S.field, flex:1}}>
+            <label style={S.label}>Date of Work <span style={S.req}>*</span></label>
+            <input type="date" max={getToday()}
+              style={{...S.input, ...(errors.workDate?S.inputError:{})}}
+              value={workDate}
+              onChange={e => { setWorkDate(e.target.value); setErrors(p => ({...p, workDate:false})); }}
+            />
+          </div>
+          <div style={{...S.field, flex:1}}>
+            <label style={S.label}>Hours Worked <span style={S.req}>*</span></label>
+            <select
+              style={{...S.input, ...S.select, ...(errors.hours?S.inputError:{})}}
+              value={hours}
+              onChange={e => { setHours(e.target.value); setErrors(p => ({...p, hours:false})); }}
+            >
+              <option value="">Select hours</option>
+              {HOURS_OPTIONS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Pay & Monthly */}
+        {(pay || name.trim()) && (
+          <div style={S.payRow}>
+            {pay && (
+              <div style={S.payBadge}>
+                <span style={S.payLabel}>This Session</span>
+                <span style={S.payAmount}>${pay}</span>
+              </div>
+            )}
+            {name.trim() && (
+              <div style={{...S.payBadge, ...(wouldExceed?S.payBadgeWarn:{})}}>
+                <span style={S.payLabel}>Monthly Total</span>
+                <span style={S.payAmount}>{monthlyHours + (hours ? parseFloat(hours) : 0)} / 8 hrs</span>
+              </div>
+            )}
+          </div>
+        )}
+        {wouldExceed && (
+          <div style={S.warnBanner}>
+            This submission would exceed 8 hrs for {new Date(workDate + "T12:00:00").toLocaleString("en-US",{month:"long",year:"numeric"})}. Please verify before submitting.
+          </div>
+        )}
+
+        {/* Tasks */}
+        <div style={S.field}>
+          <label style={S.label}>Work Completed <span style={S.req}>*</span></label>
+          <p style={S.helper}>Select all that apply for this session.</p>
+          <div style={S.taskList}>
+            {TASKS.map(t => {
+              const active = tasks.includes(t.id);
+              return (
+                <button key={t.id}
+                  onClick={() => { toggleTask(t.id); setErrors(p => ({...p, tasks:false})); }}
+                  style={{...S.taskBtn, ...(active?S.taskBtnActive:{}), ...(errors.tasks?{borderColor:"#e74c3c"}:{})}}
+                >
+                  <div style={{...S.taskCheck, ...(active?S.taskCheckActive:{})}}>
+                    {active && <CheckIcon />}
+                  </div>
+                  <span style={S.taskLabel}>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Summary */}
+        <div style={S.field}>
+          <label style={S.label}>Brief Summary of Work <span style={S.req}>*</span></label>
+          <p style={S.helper}>2–3 sentences: What data did you review? What did you find? What will you adjust?</p>
+          <textarea
+            style={{...S.input, ...S.textarea, ...(errors.summary?S.inputError:{})}}
+            placeholder="Example: Reviewed ELA assessment scores for my 10th grade cohort. Identified 6 students below benchmark in reading comprehension. Will implement targeted small group instruction next week."
+            value={summary}
+            onChange={e => { setSummary(e.target.value); setErrors(p => ({...p, summary:false})); }}
+          />
+        </div>
+
+        {/* Feedback for Summer Unit Plans */}
+        <div style={S.field}>
+          <label style={S.label}>Feedback for Summer Unit Plans</label>
+          <p style={S.helper}>Based on your data analysis, what topics, standards, or strategies should be prioritized when building summer unit plans? What's working? What needs to change?</p>
+          <textarea
+            style={{...S.input, ...S.textarea}}
+            placeholder="Example: Students are consistently struggling with informational text analysis — unit plans should include more scaffolded close reading activities. The vocabulary strategies from Q3 showed strong gains and should be carried forward."
+            value={feedback}
+            onChange={e => setFeedback(e.target.value)}
+          />
+        </div>
+
+        {/* Submit */}
+        <button onClick={handleSubmit} style={S.submitBtn}>
+          <SendIcon /> Submit Hours
+        </button>
+        <p style={S.submitNote}>
+          Your hours will be saved and you'll choose how to send the notification to <strong>{NOTIFY_EMAIL}</strong>.
+        </p>
+      </div>
+
+      <footer style={S.footer}>
+        <span>PPEP TEC High Schools &middot; Off-Contract Data Analysis Program</span>
+        <button onClick={onAdmin} style={S.adminLink}><ShieldIcon /> Admin</button>
+      </footer>
+    </div>
+  );
+}
+
+/* ─── Send Options Screen ─── */
+function SendOptionsScreen({ entry, onDone }) {
+  const [copied, setCopied] = useState(false);
+
+  const campusLabel = CAMPUSES.find(c => c.code === entry.campus)?.name || entry.campus;
+  const taskLabels = entry.tasks.map(t => TASKS.find(tk => tk.id === t)?.label || t).join("; ");
+
+  const subjectRaw = "Off-Contract Hours: " + entry.name + " — " + campusLabel + " — " + fmt(entry.workDate);
+  const bodyRaw =
+    "OFF-CONTRACT HOURS SUBMISSION\n\nTeacher: " + entry.name +
+    "\nCampus: " + entry.campus + " — " + campusLabel +
+    "\nDate of Work: " + fmt(entry.workDate) +
+    "\nHours Worked: " + entry.hours + " hr(s)" +
+    "\nPay: $" + (entry.hours * 40).toFixed(2) +
+    "\n\nWork Completed:\n" + taskLabels +
+    "\n\nSummary:\n" + entry.summary +
+    "\n\nFeedback for Summer Unit Plans:\n" + (entry.feedback || "N/A") +
+    "\n\nSubmitted: " + new Date(entry.submittedAt).toLocaleString();
+
+  const subjectEnc = encodeURIComponent(subjectRaw);
+  const bodyEnc = encodeURIComponent(bodyRaw);
+
+  const openMailto = () => {
+    window.location.href = "mailto:" + NOTIFY_EMAIL + "?subject=" + subjectEnc + "&body=" + bodyEnc;
+    setTimeout(onDone, 1000);
+  };
+
+  const openGmail = () => {
+    window.open("https://mail.google.com/mail/?view=cm&to=" + NOTIFY_EMAIL + "&su=" + subjectEnc + "&body=" + bodyEnc, "_blank");
+    setTimeout(onDone, 1000);
+  };
+
+  const copyToClipboard = () => {
+    const text = "TO: " + NOTIFY_EMAIL + "\nSUBJECT: " + subjectRaw + "\n\n" + bodyRaw;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(onDone, 1500);
+    }).catch(() => {
+      // Fallback for older browsers
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(onDone, 1500);
+    });
+  };
+
+  return (
+    <div style={S.container}>
+      <div style={S.sendScreen}>
+        <div style={S.sendCircle}>
+          <SendIcon />
+        </div>
+        <h2 style={S.successTitle}>Hours Saved!</h2>
+        <p style={S.successText}>Now send your submission to <strong>{NOTIFY_EMAIL}</strong> using one of these options:</p>
+
+        <div style={S.sendOptions}>
+          {/* Email App */}
+          <button onClick={openMailto} style={S.sendBtn}>
+            <div style={S.sendBtnIcon}>
+              <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            </div>
+            <div style={S.sendBtnText}>
+              <span style={S.sendBtnTitle}>Open Email App</span>
+              <span style={S.sendBtnDesc}>Mail, Outlook, or default app</span>
+            </div>
+          </button>
+
+          {/* Gmail */}
+          <button onClick={openGmail} style={S.sendBtn}>
+            <div style={{...S.sendBtnIcon, background:"#ea4335", color:"white"}}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M20 18h-2V9.25L12 13 6 9.25V18H4V6h1.2l6.8 4.25L18.8 6H20v12zM20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z"/></svg>
+            </div>
+            <div style={S.sendBtnText}>
+              <span style={S.sendBtnTitle}>Open in Gmail</span>
+              <span style={S.sendBtnDesc}>Opens Gmail in your browser</span>
+            </div>
+          </button>
+
+          {/* Copy */}
+          <button onClick={copyToClipboard} style={S.sendBtn}>
+            <div style={{...S.sendBtnIcon, background: copied ? "#27ae60" : "#6b7d94", color:"white"}}>
+              {copied ? <CheckIcon /> : (
+                <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              )}
+            </div>
+            <div style={S.sendBtnText}>
+              <span style={S.sendBtnTitle}>{copied ? "Copied!" : "Copy to Clipboard"}</span>
+              <span style={S.sendBtnDesc}>{copied ? "Now paste into any email" : "Paste into any email yourself"}</span>
+            </div>
+          </button>
+        </div>
+
+        <p style={{fontSize:12, color:"#8899aa", textAlign:"center", marginTop:16, lineHeight:1.5}}>
+          Your hours have been saved locally. Choose any option above to email your submission.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Success ─── */
+function SuccessScreen({ onDone }) {
+  return (
+    <div style={S.container}>
+      <div style={S.successCard}>
+        <div style={S.successCircle}><CheckIcon /></div>
+        <h2 style={S.successTitle}>Submission Complete</h2>
+        <p style={S.successText}>Your off-contract hours have been recorded and sent for approval. Thank you!</p>
+        <button onClick={onDone} style={S.successBtn}>Submit Another</button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Admin Login ─── */
+function AdminLogin({ onBack, onSuccess }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(false);
+  const tryLogin = () => {
+    if (pin === ADMIN_PIN) onSuccess();
+    else { setError(true); setPin(""); }
+  };
+  return (
+    <div style={S.container}>
+      <div style={S.adminCard}>
+        <button onClick={onBack} style={S.backBtn}><BackIcon /> Back</button>
+        <div style={{...S.successCircle, background:"#2d3a52"}}><ShieldIcon /></div>
+        <h2 style={{...S.successTitle, marginTop:16}}>Admin Access</h2>
+        <p style={{...S.successText, marginBottom:20}}>Enter the admin PIN to view all submissions.</p>
+        <input type="password" maxLength={4} placeholder="4-digit PIN" value={pin}
+          onChange={e => { setPin(e.target.value.replace(/\D/g,"")); setError(false); }}
+          onKeyDown={e => e.key==="Enter" && tryLogin()}
+          style={{...S.input, textAlign:"center", fontSize:24, letterSpacing:12, maxWidth:200, margin:"0 auto"}}
+        />
+        {error && <p style={{color:"#e74c3c",fontSize:13,marginTop:8}}>Incorrect PIN</p>}
+        <button onClick={tryLogin} style={{...S.submitBtn, marginTop:20}}>Enter</button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Admin Dashboard ─── */
+function AdminDashboard({ submissions, onDelete, onBack }) {
+  const [filter, setFilter] = useState("all");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const months = [...new Set(submissions.map(s => monthKey(s.workDate)))].sort().reverse();
+  const filtered = filter === "all" ? submissions : submissions.filter(s => monthKey(s.workDate) === filter);
+  const totalHours = filtered.reduce((s, e) => s + e.hours, 0);
+  const totalPay = (totalHours * 40).toFixed(2);
+
+  const byTeacher = {};
+  filtered.forEach(s => {
+    if (!byTeacher[s.name]) byTeacher[s.name] = { hours:0, count:0, campus:s.campus };
+    byTeacher[s.name].hours += s.hours;
+    byTeacher[s.name].count += 1;
+  });
+
+  const handleExport = () => {
+    const header = "Name,Campus,Date,Hours,Pay,Tasks,Summary,Feedback for Summer Unit Plans,Submitted\n";
+    const rows = filtered.map(s =>
+      '"'+s.name+'","'+s.campus+'","'+s.workDate+'",'+s.hours+',$'+(s.hours*40).toFixed(2)+',"'+s.tasks.join("; ")+'","'+s.summary.replace(/"/g,'""')+'","'+(s.feedback||"").replace(/"/g,'""')+'","'+new Date(s.submittedAt).toLocaleString()+'"'
+    ).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "ppep-hours-" + filter + ".csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={S.container}>
+      <header style={S.header}>
+        <div style={S.headerInner}>
+          <button onClick={onBack} style={{...S.backBtn, color:"white", marginBottom:8}}><BackIcon /> Back to Form</button>
+          <h1 style={S.headerTitle}>Admin Dashboard</h1>
+          <p style={S.headerSub}>Off-Contract Hours Overview</p>
+        </div>
+        <div style={S.goldStripe} />
+      </header>
+
+      <div className="stats-row" style={S.statsRow}>
+        <div style={S.statCard}><span style={S.statValue}>{filtered.length}</span><span style={S.statLabel}>Submissions</span></div>
+        <div style={S.statCard}><span style={S.statValue}>{totalHours}</span><span style={S.statLabel}>Total Hours</span></div>
+        <div style={S.statCard}><span style={S.statValue}>${totalPay}</span><span style={S.statLabel}>Total Pay</span></div>
+      </div>
+
+      <div style={S.filterRow}>
+        <select value={filter} onChange={e => setFilter(e.target.value)} style={{...S.input,...S.select,maxWidth:200,fontSize:13}}>
+          <option value="all">All Months</option>
+          {months.map(m => <option key={m} value={m}>{new Date(m+"-15").toLocaleString("en-US",{month:"long",year:"numeric"})}</option>)}
+        </select>
+        <button onClick={handleExport} style={S.exportBtn}>Export CSV</button>
+      </div>
+
+      {Object.keys(byTeacher).length > 0 && (
+        <div style={S.teacherSection}>
+          <h3 style={S.sectionTitle}>Teacher Summary</h3>
+          <div className="teacher-grid" style={S.teacherGrid}>
+            {Object.entries(byTeacher).sort((a,b) => b[1].hours - a[1].hours).map(([tname, data]) => (
+              <div key={tname} style={S.teacherCard}>
+                <div style={S.teacherName}>{tname}</div>
+                <div style={S.teacherMeta}>{data.campus} &middot; {data.count} session{data.count>1?"s":""}</div>
+                <div style={S.teacherBar}>
+                  <div style={{...S.teacherBarFill, width: Math.min(100,(data.hours/8)*100)+"%", background: data.hours>8?"#e74c3c":"#2d5ca6"}} />
+                </div>
+                <div style={S.teacherHours}>{data.hours} / 8 hrs &middot; ${(data.hours*40).toFixed(2)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={S.teacherSection}>
+        <h3 style={S.sectionTitle}>All Submissions ({filtered.length})</h3>
+        {filtered.length===0 && <p style={{color:"#8899aa",fontSize:14,textAlign:"center",padding:32}}>No submissions yet.</p>}
+        {filtered.map(s => (
+          <div key={s.id} style={S.subCard}>
+            <div style={S.subHeader}>
+              <div><span style={S.subName}>{s.name}</span><span style={S.subCampus}>{s.campus}</span></div>
+              <div style={S.subRight}><span style={S.subPay}>${(s.hours*40).toFixed(2)}</span><span style={S.subHours}>{s.hours} hr{s.hours>1?"s":""}</span></div>
+            </div>
+            <div style={S.subDate}>{fmt(s.workDate)}</div>
+            <div style={S.subTasks}>
+              {s.tasks.map(t => <span key={t} style={S.subTag}>{(TASKS.find(tk=>tk.id===t)?.label||t).split("(")[0].trim().substring(0,30)}</span>)}
+            </div>
+            <div style={S.subSummary}>{s.summary}</div>
+            {s.feedback && (
+              <div style={S.subFeedback}>
+                <span style={S.subFeedbackLabel}>Unit Plan Feedback:</span> {s.feedback}
+              </div>
+            )}
+            <div style={S.subFooter}>
+              <span style={{fontSize:11,color:"#99aabb"}}>Submitted {new Date(s.submittedAt).toLocaleString()}</span>
+              {confirmDelete===s.id ? (
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={() => {onDelete(s.id);setConfirmDelete(null);}} style={{...S.delBtn,background:"#e74c3c",color:"white"}}>Confirm</button>
+                  <button onClick={() => setConfirmDelete(null)} style={S.delBtn}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDelete(s.id)} style={S.delBtn}><TrashIcon /></button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Styles ─── */
+const S = {
+  shell: { minHeight:"100vh", background:"#eef2f7", fontFamily:"'DM Sans', sans-serif" },
+  container: { maxWidth:640, margin:"0 auto", minHeight:"100vh" },
+  header: { background:"linear-gradient(145deg, #141f34 0%, #1e3460 50%, #2b4e8a 100%)", position:"relative" },
+  headerInner: { padding:"28px 24px 22px", position:"relative", zIndex:1 },
+  headerBadge: { display:"inline-block", fontSize:10, fontWeight:700, letterSpacing:2, color:"#c9a84c", textTransform:"uppercase", marginBottom:6, background:"rgba(201,168,76,0.12)", padding:"3px 10px", borderRadius:4 },
+  headerTitle: { fontSize:24, fontWeight:700, color:"white", margin:0, letterSpacing:-0.5, fontFamily:"'Source Serif 4','DM Sans',serif" },
+  headerSub: { fontSize:13, color:"rgba(255,255,255,0.7)", margin:"4px 0 0", fontWeight:400 },
+  goldStripe: { height:3, background:"linear-gradient(90deg, #c9a84c, #e4c96a, #c9a84c)" },
+  infoBar: { display:"flex", alignItems:"center", gap:10, padding:"12px 24px", background:"#fff", borderBottom:"1px solid #dce3ed", fontSize:13, color:"#4a5e74" },
+  formBody: { padding:"20px 24px 32px", background:"#fff" },
+  field: { marginBottom:22 },
+  label: { display:"block", fontSize:13, fontWeight:600, color:"#1a2744", marginBottom:7 },
+  req: { color:"#e74c3c" },
+  helper: { fontSize:12, color:"#7b8fa3", margin:"-2px 0 8px", lineHeight:1.4 },
+  input: { width:"100%", padding:"11px 14px", border:"1.5px solid #d0d7e3", borderRadius:8, fontSize:14, fontFamily:"'DM Sans',sans-serif", color:"#2c3e50", background:"#fff", outline:"none", transition:"border 0.2s", boxSizing:"border-box" },
+  inputError: { borderColor:"#e74c3c", background:"#fef8f8" },
+  select: { cursor:"pointer", WebkitAppearance:"none", appearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7d94' stroke-width='1.5' fill='none'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center", paddingRight:36 },
+  textarea: { minHeight:100, resize:"vertical", lineHeight:1.5 },
+  row: { display:"flex", gap:14 },
+  campusGrid: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 },
+  campusBtn: { display:"flex", flexDirection:"column", alignItems:"flex-start", padding:"10px 14px", border:"1.5px solid #d0d7e3", borderRadius:8, background:"#fff", cursor:"pointer", transition:"all 0.15s", textAlign:"left", fontFamily:"'DM Sans',sans-serif" },
+  campusBtnActive: { borderColor:"#2d5ca6", background:"#eef3fb", boxShadow:"0 0 0 2px rgba(45,92,166,0.15)" },
+  campusCode: { fontSize:13, fontWeight:700, color:"#1a2744", letterSpacing:0.5 },
+  campusName: { fontSize:11, color:"#7b8fa3", marginTop:1 },
+  payRow: { display:"flex", gap:10, marginBottom:18 },
+  payBadge: { flex:1, background:"#f0f4fa", borderRadius:8, padding:"10px 14px", textAlign:"center" },
+  payBadgeWarn: { background:"#fef3f0", border:"1px solid #f5c6bc" },
+  payLabel: { display:"block", fontSize:10, fontWeight:600, letterSpacing:1, textTransform:"uppercase", color:"#7b8fa3", marginBottom:2 },
+  payAmount: { fontSize:18, fontWeight:700, color:"#1a2744" },
+  warnBanner: { background:"#fef3f0", border:"1px solid #f5c6bc", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c0392b", marginBottom:18, lineHeight:1.5 },
+  taskList: { display:"flex", flexDirection:"column", gap:6 },
+  taskBtn: { display:"flex", alignItems:"center", gap:12, padding:"11px 14px", border:"1.5px solid #d0d7e3", borderRadius:8, background:"#fff", cursor:"pointer", textAlign:"left", fontFamily:"'DM Sans',sans-serif", transition:"all 0.15s" },
+  taskBtnActive: { borderColor:"#2d5ca6", background:"#eef3fb" },
+  taskCheck: { width:22, height:22, borderRadius:5, border:"2px solid #c5ced8", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, transition:"all 0.15s", color:"transparent" },
+  taskCheckActive: { background:"#2d5ca6", borderColor:"#2d5ca6", color:"white" },
+  taskLabel: { fontSize:13, color:"#2c3e50", lineHeight:1.4 },
+  submitBtn: { display:"flex", alignItems:"center", justifyContent:"center", gap:10, width:"100%", padding:"14px 24px", background:"linear-gradient(135deg, #2d5ca6, #1a2744)", color:"white", border:"none", borderRadius:10, fontSize:15, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", letterSpacing:0.2, transition:"transform 0.1s", marginTop:4 },
+  submitNote: { fontSize:12, color:"#8899aa", textAlign:"center", marginTop:10, lineHeight:1.5 },
+  footer: { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 24px", fontSize:11, color:"#8899aa", background:"#fff", borderTop:"1px solid #dce3ed" },
+  adminLink: { display:"flex", alignItems:"center", gap:5, background:"none", border:"none", color:"#8899aa", fontSize:11, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", padding:"4px 8px", borderRadius:4 },
+  successCard: { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:32, textAlign:"center" },
+  successCircle: { width:64, height:64, borderRadius:"50%", background:"#27ae60", display:"flex", alignItems:"center", justifyContent:"center", color:"white" },
+  successTitle: { fontSize:22, fontWeight:700, color:"#1a2744", margin:"16px 0 8px", fontFamily:"'Source Serif 4','DM Sans',serif" },
+  successText: { fontSize:14, color:"#6b7d94", lineHeight:1.6, maxWidth:360 },
+  successBtn: { marginTop:24, padding:"12px 36px", background:"#eef2f7", border:"1.5px solid #d0d7e3", borderRadius:8, fontSize:14, fontWeight:500, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", color:"#1a2744" },
+  sendScreen: { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:"32px 24px", textAlign:"center" },
+  sendCircle: { width:64, height:64, borderRadius:"50%", background:"#2d5ca6", display:"flex", alignItems:"center", justifyContent:"center", color:"white" },
+  sendOptions: { display:"flex", flexDirection:"column", gap:10, width:"100%", maxWidth:380, marginTop:24 },
+  sendBtn: { display:"flex", alignItems:"center", gap:14, padding:"14px 18px", background:"#fff", border:"1.5px solid #d0d7e3", borderRadius:10, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", transition:"all 0.15s", textAlign:"left", boxShadow:"0 1px 4px rgba(0,0,0,0.04)" },
+  sendBtnIcon: { width:44, height:44, borderRadius:10, background:"#2d5ca6", color:"white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 },
+  sendBtnText: { display:"flex", flexDirection:"column" },
+  sendBtnTitle: { fontSize:14, fontWeight:600, color:"#1a2744" },
+  sendBtnDesc: { fontSize:11, color:"#8899aa", marginTop:1 },
+  adminCard: { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:32, textAlign:"center" },
+  backBtn: { display:"flex", alignItems:"center", gap:6, background:"none", border:"none", color:"#2d5ca6", fontSize:13, fontWeight:500, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", padding:0, marginBottom:4 },
+  statsRow: { display:"flex", gap:10, padding:"16px 20px" },
+  statCard: { flex:1, background:"#fff", borderRadius:10, padding:"14px 10px", textAlign:"center", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" },
+  statValue: { display:"block", fontSize:22, fontWeight:700, color:"#1a2744" },
+  statLabel: { fontSize:10, fontWeight:600, letterSpacing:1, textTransform:"uppercase", color:"#8899aa" },
+  filterRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"8px 20px 16px" },
+  exportBtn: { padding:"8px 18px", background:"#1a2744", color:"white", border:"none", borderRadius:6, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" },
+  teacherSection: { padding:"0 20px 20px" },
+  sectionTitle: { fontSize:14, fontWeight:700, color:"#1a2744", margin:"4px 0 12px", letterSpacing:-0.2 },
+  teacherGrid: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 },
+  teacherCard: { background:"#fff", borderRadius:10, padding:"14px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" },
+  teacherName: { fontSize:13, fontWeight:700, color:"#1a2744" },
+  teacherMeta: { fontSize:11, color:"#8899aa", marginTop:2 },
+  teacherBar: { height:5, background:"#e8ecf2", borderRadius:3, marginTop:8, overflow:"hidden" },
+  teacherBarFill: { height:"100%", borderRadius:3, transition:"width 0.3s" },
+  teacherHours: { fontSize:11, color:"#5a6e82", marginTop:4, fontWeight:500 },
+  subCard: { background:"#fff", borderRadius:10, padding:"16px 18px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)", border:"1px solid #e8ecf2" },
+  subHeader: { display:"flex", justifyContent:"space-between", alignItems:"flex-start" },
+  subName: { fontSize:14, fontWeight:700, color:"#1a2744" },
+  subCampus: { display:"inline-block", marginLeft:8, fontSize:11, fontWeight:600, color:"#2d5ca6", background:"#eef3fb", padding:"2px 8px", borderRadius:4 },
+  subRight: { textAlign:"right" },
+  subPay: { display:"block", fontSize:16, fontWeight:700, color:"#1a2744" },
+  subHours: { fontSize:11, color:"#8899aa" },
+  subDate: { fontSize:12, color:"#7b8fa3", marginTop:4 },
+  subTasks: { display:"flex", flexWrap:"wrap", gap:4, marginTop:8 },
+  subTag: { fontSize:10, background:"#f0f4fa", color:"#4a5e74", padding:"3px 8px", borderRadius:4, fontWeight:500 },
+  subSummary: { fontSize:12, color:"#4a5e74", lineHeight:1.5, marginTop:8, borderTop:"1px solid #eef2f7", paddingTop:8 },
+  subFeedback: { fontSize:12, color:"#2d5ca6", lineHeight:1.5, marginTop:6, background:"#f0f4fa", padding:"8px 10px", borderRadius:6, borderLeft:"3px solid #c9a84c" },
+  subFeedbackLabel: { fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:0.5, display:"block", color:"#8899aa", marginBottom:2 },
+  subFooter: { display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 },
+  delBtn: { background:"#f0f4fa", border:"none", borderRadius:4, padding:"4px 10px", fontSize:11, cursor:"pointer", color:"#8899aa", fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:4 },
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
